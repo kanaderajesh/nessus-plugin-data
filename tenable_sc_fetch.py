@@ -9,13 +9,37 @@ Authentication options:
   1. Username / password  (session token via POST /rest/token)
   2. API key pair         (X-APIKey header — SC 5.13+)
 
+Credentials can be supplied as CLI flags OR environment variables:
+
+  Environment variable  CLI flag
+  --------------------  --------
+  TSC_HOST              --host
+  TSC_USERNAME          -u / --username
+  TSC_PASSWORD          -p / --password
+  TSC_ACCESS_KEY        --access-key
+  TSC_SECRET_KEY        --secret-key
+
+CLI flags take precedence over environment variables when both are set.
+
 Usage examples
 --------------
-  # Username / password:
+  # Username / password via flags:
   python tenable_sc_fetch.py --host sc.example.com -u admin -p secret
 
-  # API key pair:
+  # Username / password via environment variables:
+  export TSC_HOST=sc.example.com
+  export TSC_USERNAME=admin
+  export TSC_PASSWORD=secret
+  python tenable_sc_fetch.py
+
+  # API key pair via flags:
   python tenable_sc_fetch.py --host sc.example.com --access-key AK --secret-key SK
+
+  # API key pair via environment variables:
+  export TSC_HOST=sc.example.com
+  export TSC_ACCESS_KEY=AK
+  export TSC_SECRET_KEY=SK
+  python tenable_sc_fetch.py
 
   # Custom output file and field list:
   python tenable_sc_fetch.py --host sc.example.com -u admin -p secret \\
@@ -31,6 +55,7 @@ Usage examples
 import argparse
 import csv
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -250,11 +275,9 @@ def download_all_plugins(
         data = client.get_plugin_page(fields=fields, start=offset, count=page_count)
 
         response = data.get("response", {})
-        # The API may return plugins under "usable" or "manageable"
         plugins: list[dict] = response.get("usable") or response.get("manageable") or []
 
         if not plugins:
-            # No more data even though total said otherwise — stop gracefully
             break
 
         for plugin in plugins:
@@ -295,29 +318,64 @@ def _build_parser() -> argparse.ArgumentParser:
 
     conn = ap.add_argument_group("connection")
     conn.add_argument(
-        "--host", required=True, metavar="HOST",
-        help="Tenable SC hostname or full URL (e.g. sc.example.com or https://sc.example.com)",
+        "--host",
+        metavar="HOST",
+        default=os.environ.get("TSC_HOST", ""),
+        help=(
+            "Tenable SC hostname or full URL (e.g. sc.example.com). "
+            "Overrides env var TSC_HOST."
+        ),
     )
     conn.add_argument(
-        "--no-verify", action="store_true",
+        "--no-verify",
+        action="store_true",
         help="Disable SSL certificate verification (useful for self-signed certs)",
     )
 
-    cred = ap.add_argument_group("username / password authentication")
-    cred.add_argument("-u", "--username", metavar="USER")
-    cred.add_argument("-p", "--password", metavar="PASS")
+    cred = ap.add_argument_group(
+        "username / password authentication",
+        "Flags take precedence over the corresponding environment variables.",
+    )
+    cred.add_argument(
+        "-u", "--username",
+        metavar="USER",
+        default=os.environ.get("TSC_USERNAME", ""),
+        help="Username for session-based auth. Overrides env var TSC_USERNAME.",
+    )
+    cred.add_argument(
+        "-p", "--password",
+        metavar="PASS",
+        default=os.environ.get("TSC_PASSWORD", ""),
+        help="Password for session-based auth. Overrides env var TSC_PASSWORD.",
+    )
 
-    keys = ap.add_argument_group("API key authentication (Tenable SC 5.13+)")
-    keys.add_argument("--access-key", metavar="ACCESS_KEY")
-    keys.add_argument("--secret-key", metavar="SECRET_KEY")
+    keys = ap.add_argument_group(
+        "API key authentication (Tenable SC 5.13+)",
+        "Flags take precedence over the corresponding environment variables.",
+    )
+    keys.add_argument(
+        "--access-key",
+        metavar="ACCESS_KEY",
+        default=os.environ.get("TSC_ACCESS_KEY", ""),
+        help="API access key. Overrides env var TSC_ACCESS_KEY.",
+    )
+    keys.add_argument(
+        "--secret-key",
+        metavar="SECRET_KEY",
+        default=os.environ.get("TSC_SECRET_KEY", ""),
+        help="API secret key. Overrides env var TSC_SECRET_KEY.",
+    )
 
     out = ap.add_argument_group("output")
     out.add_argument(
-        "-o", "--output", metavar="FILE", default="",
+        "-o", "--output",
+        metavar="FILE",
+        default="",
         help="Output CSV file path (default: plugins_YYYYMMDD_HHMMSS.csv)",
     )
     out.add_argument(
-        "--fields", metavar="FIELDS",
+        "--fields",
+        metavar="FIELDS",
         default=",".join(DEFAULT_FIELDS),
         help=(
             "Comma-separated list of API fields to include in the CSV.\n"
@@ -327,11 +385,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     fetch = ap.add_argument_group("fetch options")
     fetch.add_argument(
-        "--batch-size", type=int, default=DEFAULT_BATCH_SIZE, metavar="N",
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        metavar="N",
         help=f"Plugins to request per API call (default: {DEFAULT_BATCH_SIZE})",
     )
     fetch.add_argument(
-        "--max-plugins", type=int, default=None, metavar="N",
+        "--max-plugins",
+        type=int,
+        default=None,
+        metavar="N",
         help="Stop after downloading N plugins (default: download all)",
     )
 
@@ -339,25 +403,45 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _validate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if not args.host:
+        parser.error(
+            "--host is required (or set the TSC_HOST environment variable)."
+        )
+
     using_creds = bool(args.username or args.password)
     using_keys  = bool(args.access_key or args.secret_key)
 
     if not using_creds and not using_keys:
         parser.error(
             "Authentication required. Provide either:\n"
-            "  --username / --password\n"
-            "  --access-key / --secret-key"
+            "  --username / --password  (or env vars TSC_USERNAME / TSC_PASSWORD)\n"
+            "  --access-key / --secret-key  (or env vars TSC_ACCESS_KEY / TSC_SECRET_KEY)"
         )
+
     if using_creds:
         if not args.username:
-            parser.error("--username is required with password authentication.")
+            parser.error(
+                "--username is required with password authentication "
+                "(or set TSC_USERNAME)."
+            )
         if not args.password:
-            parser.error("--password is required with password authentication.")
+            parser.error(
+                "--password is required with password authentication "
+                "(or set TSC_PASSWORD)."
+            )
+
     if using_keys:
         if not args.access_key:
-            parser.error("--access-key is required with API key authentication.")
+            parser.error(
+                "--access-key is required with API key authentication "
+                "(or set TSC_ACCESS_KEY)."
+            )
         if not args.secret_key:
-            parser.error("--secret-key is required with API key authentication.")
+            parser.error(
+                "--secret-key is required with API key authentication "
+                "(or set TSC_SECRET_KEY)."
+            )
+
     if args.batch_size < 1:
         parser.error("--batch-size must be a positive integer.")
 
