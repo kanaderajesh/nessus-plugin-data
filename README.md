@@ -33,6 +33,57 @@ python tenable_sc_fetch.py --host sc.example.com \
     --secret-key YOUR_SECRET_KEY
 ```
 
+## Credentials via environment variables
+
+Passing credentials as CLI flags exposes them in shell history and process
+listings. Use environment variables instead:
+
+| Environment variable | Replaces flag |
+|---|---|
+| `TSC_HOST` | `--host` |
+| `TSC_USERNAME` | `-u / --username` |
+| `TSC_PASSWORD` | `-p / --password` |
+| `TSC_ACCESS_KEY` | `--access-key` |
+| `TSC_SECRET_KEY` | `--secret-key` |
+
+CLI flags always take precedence over environment variables when both are set.
+
+### Example — username / password via env vars
+
+```bash
+export TSC_HOST=sc.example.com
+export TSC_USERNAME=admin
+export TSC_PASSWORD=secret
+
+python tenable_sc_fetch.py
+```
+
+### Example — API key pair via env vars
+
+```bash
+export TSC_HOST=sc.example.com
+export TSC_ACCESS_KEY=YOUR_ACCESS_KEY
+export TSC_SECRET_KEY=YOUR_SECRET_KEY
+
+python tenable_sc_fetch.py
+```
+
+### Example — using a .env file
+
+```bash
+# .env (keep out of version control)
+TSC_HOST=sc.example.com
+TSC_USERNAME=admin
+TSC_PASSWORD=secret
+```
+
+```bash
+set -a && source .env && set +a
+python tenable_sc_fetch.py
+```
+
+> **Tip:** Add `.env` to your `.gitignore` so credentials are never committed.
+
 ## Full usage
 
 ```
@@ -43,20 +94,20 @@ usage: tenable_sc_fetch [-h] --host HOST [--no-verify]
                         [--batch-size N] [--max-plugins N]
 ```
 
-### Options
+### All options
 
-| Flag | Default | Description |
-|---|---|---|
-| `--host HOST` | — | Tenable SC hostname or full URL (**required**) |
-| `--no-verify` | off | Disable SSL certificate verification |
-| `-u / --username USER` | — | Username for session-based auth |
-| `-p / --password PASS` | — | Password for session-based auth |
-| `--access-key ACCESS_KEY` | — | API access key (SC 5.13+) |
-| `--secret-key SECRET_KEY` | — | API secret key (SC 5.13+) |
-| `-o / --output FILE` | `plugins_YYYYMMDD_HHMMSS.csv` | Output CSV path |
-| `--fields FIELDS` | *(see below)* | Comma-separated list of API fields to include |
-| `--batch-size N` | `1000` | Plugins fetched per API request |
-| `--max-plugins N` | all | Stop after downloading N plugins |
+| Flag | Env var | Default | Description |
+|---|---|---|---|
+| `--host HOST` | `TSC_HOST` | — | Tenable SC hostname or full URL (**required**) |
+| `--no-verify` | — | off | Disable SSL certificate verification |
+| `-u / --username USER` | `TSC_USERNAME` | — | Username for session-based auth |
+| `-p / --password PASS` | `TSC_PASSWORD` | — | Password for session-based auth |
+| `--access-key ACCESS_KEY` | `TSC_ACCESS_KEY` | — | API access key (SC 5.13+) |
+| `--secret-key SECRET_KEY` | `TSC_SECRET_KEY` | — | API secret key (SC 5.13+) |
+| `-o / --output FILE` | — | `plugins_YYYYMMDD_HHMMSS.csv` | Output CSV path |
+| `--fields FIELDS` | — | *(see below)* | Comma-separated API fields to include |
+| `--batch-size N` | — | `1000` | Plugins fetched per API request |
+| `--max-plugins N` | — | all | Stop after downloading N plugins |
 
 ### Default CSV fields
 
@@ -87,7 +138,7 @@ python tenable_sc_fetch.py --host sc.example.com -u admin -p secret --no-verify
 
 ## How it works
 
-1. **Authenticate** — POSTs credentials to `POST /rest/token` (session cookie)
+1. **Authenticate** — POSTs credentials to `POST /rest/token` (session token)
    or adds an `X-APIKey` header (API key pair).
 2. **Count** — issues a minimal `GET /rest/plugin?startOffset=0&endOffset=1`
    to read `usableCount` from the response.
