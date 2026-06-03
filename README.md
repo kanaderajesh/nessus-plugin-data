@@ -6,57 +6,59 @@ REST API and writes it to a CSV file.
 
 ## Requirements
 
-- Python 3.10+
-- `requests`
+- **Python 3.12+**
+- [`requests`](https://pypi.org/project/requests/) 2.32.3+
+- [`urllib3`](https://pypi.org/project/urllib3/) 2.2.2+
+- [`certifi`](https://pypi.org/project/certifi/) 2024.7.4+
+
+### Install dependencies
 
 ```bash
+# Create and activate a virtual environment (recommended)
+python3.12 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
 pip install -r requirements.txt
 ```
 
-## Usage
-
-### Username / password authentication
+## Quick start
 
 ```bash
+# Username / password
 python tenable_sc_fetch.py --host sc.example.com -u admin -p secret
-```
 
-### API key authentication (Tenable SC 5.13+)
-
-```bash
+# API key pair (Tenable SC 5.13+)
 python tenable_sc_fetch.py --host sc.example.com \
     --access-key YOUR_ACCESS_KEY \
     --secret-key YOUR_SECRET_KEY
 ```
 
-### Full example with options
+## Full usage
 
-```bash
-python tenable_sc_fetch.py \
-    --host sc.example.com \
-    -u admin -p secret \
-    --output plugins.csv \
-    --fields id,name,severity,family,cvssV3BaseScore,description \
-    --batch-size 500 \
-    --no-verify
+```
+usage: tenable_sc_fetch [-h] --host HOST [--no-verify]
+                        [-u USER] [-p PASS]
+                        [--access-key ACCESS_KEY] [--secret-key SECRET_KEY]
+                        [-o FILE] [--fields FIELDS]
+                        [--batch-size N] [--max-plugins N]
 ```
 
-## Options
+### Options
 
-| Flag | Description |
-|---|---|
-| `--host HOST` | Tenable SC hostname or full URL (**required**) |
-| `-u / --username` | Username for session-based auth |
-| `-p / --password` | Password for session-based auth |
-| `--access-key` | API access key (SC 5.13+) |
-| `--secret-key` | API secret key (SC 5.13+) |
-| `-o / --output FILE` | Output CSV path (default: `plugins_YYYYMMDD_HHMMSS.csv`) |
-| `--fields FIELDS` | Comma-separated list of API fields to include |
-| `--batch-size N` | Plugins per API request (default: 1000) |
-| `--max-plugins N` | Stop after N plugins (default: all) |
-| `--no-verify` | Disable SSL certificate verification |
+| Flag | Default | Description |
+|---|---|---|
+| `--host HOST` | — | Tenable SC hostname or full URL (**required**) |
+| `--no-verify` | off | Disable SSL certificate verification |
+| `-u / --username USER` | — | Username for session-based auth |
+| `-p / --password PASS` | — | Password for session-based auth |
+| `--access-key ACCESS_KEY` | — | API access key (SC 5.13+) |
+| `--secret-key SECRET_KEY` | — | API secret key (SC 5.13+) |
+| `-o / --output FILE` | `plugins_YYYYMMDD_HHMMSS.csv` | Output CSV path |
+| `--fields FIELDS` | *(see below)* | Comma-separated list of API fields to include |
+| `--batch-size N` | `1000` | Plugins fetched per API request |
+| `--max-plugins N` | all | Stop after downloading N plugins |
 
-## Default CSV fields
+### Default CSV fields
 
 ```
 id, name, version, type, severity, family,
@@ -65,20 +67,40 @@ exploitable, cvssVector, baseScore, temporalScore,
 cvssV3Vector, cvssV3BaseScore, checkType, description, copyright
 ```
 
-Nested objects (e.g. `severity`, `family`) are flattened to their `name` value.
+Nested objects such as `severity` and `family` are automatically flattened
+to their `name` value (e.g. `"Medium"`, `"Web Servers"`).
+
+### Custom field list example
+
+```bash
+python tenable_sc_fetch.py \
+    --host sc.example.com -u admin -p secret \
+    --output plugins.csv \
+    --fields id,name,severity,family,cvssV3BaseScore,exploitable,description
+```
+
+### Self-signed certificate
+
+```bash
+python tenable_sc_fetch.py --host sc.example.com -u admin -p secret --no-verify
+```
 
 ## How it works
 
-1. **Authenticate** — either POSTs to `/rest/token` (session) or sends
-   an `X-APIKey` header (API keys).
-2. **Count** — fetches a single record to read `usableCount` from the response.
+1. **Authenticate** — POSTs credentials to `POST /rest/token` (session cookie)
+   or adds an `X-APIKey` header (API key pair).
+2. **Count** — issues a minimal `GET /rest/plugin?startOffset=0&endOffset=1`
+   to read `usableCount` from the response.
 3. **Paginate** — loops through `GET /rest/plugin?startOffset=N&endOffset=M`
-   until all plugins are retrieved, showing a live progress bar.
-4. **Write** — flattens every record to a plain string and streams them into
-   a UTF-8 CSV file.
-5. **Logout** — invalidates the session token (no-op for API key auth).
+   with automatic retry on transient HTTP 500/502/503/504 errors, printing a
+   live progress bar.
+4. **Flatten** — converts every nested API value to a plain string so the
+   CSV remains importable in Excel, pandas, etc.
+5. **Write** — streams all rows into a UTF-8 CSV file with a header row.
+6. **Logout** — sends `DELETE /rest/token` to invalidate the session
+   (no-op for API key auth).
 
-## Example output
+## Example terminal output
 
 ```
 [+] Authenticating as 'admin' on sc.example.com ...
@@ -89,3 +111,25 @@ Nested objects (e.g. `severity`, `family`) are flattened to their `name` value.
 [+] Writing 83,241 rows -> 'plugins_20260603_120000.csv' ...
 [+] Done.  83,241 plugins saved to 'plugins_20260603_120000.csv' (142.7 KB, 34.2s).
 ```
+
+## Files
+
+```
+.
+├── tenable_sc_fetch.py   # CLI tool
+├── requirements.txt      # Python 3.12 dependencies
+└── README.md
+```
+
+## Authentication methods
+
+### Session token (username / password)
+
+Calls `POST /rest/token` and stores the returned token in the
+`X-SecurityCenter` request header for all subsequent calls.
+The token is revoked on exit via `DELETE /rest/token`.
+
+### API key pair (Tenable SC 5.13+)
+
+Sends `X-APIKey: accesskey=<AK>; secretkey=<SK>` on every request.
+No session is created or destroyed.
